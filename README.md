@@ -1,0 +1,2 @@
+# VideoPlayerPlugins
+根据InVideo插件进行修改，增强了插件本地读取视频并播放视频的能力，还有倒放，倍速暂停等功能
