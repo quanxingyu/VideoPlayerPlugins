@@ -130,16 +130,22 @@ void UInVideoWidget::ResumePlay()
 
 
 
+
+
 void VideoPlay::StartPlay(const FString VideoURL, FDelegatePlayFailed Failed, FDelegateFirstFrame FirstFrame, const bool RealMode, const int Fps, UInVideoWidget* widget)
 {
 	StopPlay();
 	m_widget = widget;
 	m_Stopping = false;
 	m_VideoURL = VideoURL;
-	if (FPaths::IsRelative(m_VideoURL))
-	{
-		m_VideoURL = FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir() / m_VideoURL);
-	}
+	m_VideoURL = FPaths::ProjectContentDir() + m_VideoURL + TEXT(".mp4");
+	//下面需要进行profile路径的读取
+#if WITH_EDITOR
+	const FString& ProfileDir = FPaths::ProjectDir();
+#else
+	const FString& ProfileDir = FPaths::LaunchDir();
+#endif
+
 	m_RealMode = RealMode;
 	m_Fps = Fps;
 	m_UpdateTime = 1000 / m_Fps;
@@ -286,28 +292,31 @@ uint32 VideoPlay::Run()
 			// 根据方向更新帧索引
 			if (m_bReverse)
 			{
-				m_CurrentFrameIndex -= 3*m_PlayRate;
+				// 使用一致的帧率调整（与正向相同的因子）
+				int32 frameStep = FMath::Max(1, FMath::RoundToInt(2.5 * m_PlayRate));
+				m_CurrentFrameIndex -= frameStep;
+
+				// 处理反向播放的循环回绕
 				if (m_CurrentFrameIndex < 0)
 				{
 					m_CurrentFrameIndex = m_TotalFrames - 1;
-					m_WrapOpenCv->m_Stream.set(cv::CAP_PROP_POS_FRAMES, m_CurrentFrameIndex);
 				}
 			}
 			else
 			{
-				m_CurrentFrameIndex += m_PlayRate;
+				// 使用一致的基于整数的帧步进
+				int32 frameStep = FMath::Max(1, FMath::RoundToInt(2 * m_PlayRate));
+				m_CurrentFrameIndex += frameStep;
+
+				// 处理正向播放的循环回绕
 				if (m_CurrentFrameIndex >= m_TotalFrames)
 				{
 					m_CurrentFrameIndex = 0;
-					m_WrapOpenCv->m_Stream.set(cv::CAP_PROP_POS_FRAMES, 0);
 				}
 			}
 
-			// 只在需要时设置视频位置
-			if ( m_CurrentFrameIndex > 0)
-			{
-				m_WrapOpenCv->m_Stream.set(cv::CAP_PROP_POS_FRAMES, m_CurrentFrameIndex);
-			}
+			// 始终设置帧位置以确保一致性
+			m_WrapOpenCv->m_Stream.set(cv::CAP_PROP_POS_FRAMES, m_CurrentFrameIndex);
 
 			if (true == m_WrapOpenCv->m_Stream.read(m_WrapOpenCv->m_Frame))
 			{
@@ -440,19 +449,28 @@ void VideoPlay::UpdateTexture()
 	{
 		return;
 	}
-
-	// 4. 填充像素数据 (BGR => FColor)
-	for (int y = 0; y < NewHeight; y++)
-	{
+	ParallelFor(NewHeight, [&](int32 y) {
 		for (int x = 0; x < NewWidth; x++)
 		{
 			int32 i = x + y * NewWidth;
 			Data[i].B = resizedFrame.data[i * 3 + 0];
 			Data[i].G = resizedFrame.data[i * 3 + 1];
 			Data[i].R = resizedFrame.data[i * 3 + 2];
-			// Data[i].A = 255;  // 如果需要手动设置透明度
+			Data[i].A = 255;
 		}
-	}
+		});
+	// 4. 填充像素数据 (BGR => FColor)
+	//for (int y = 0; y < NewHeight; y++)
+	//{
+	//	for (int x = 0; x < NewWidth; x++)
+	//	{
+	//		int32 i = x + y * NewWidth;
+	//		Data[i].B = resizedFrame.data[i * 3 + 0];
+	//		Data[i].G = resizedFrame.data[i * 3 + 1];
+	//		Data[i].R = resizedFrame.data[i * 3 + 2];
+	//		// Data[i].A = 255;  // 如果需要手动设置透明度
+	//	}
+	//}
 
 	// 5. 更新纹理区域
 	UpdateTextureRegions(VideoTexture, 0, 1, m_VideoUpdateTextureRegion,

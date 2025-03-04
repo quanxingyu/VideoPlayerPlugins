@@ -108,8 +108,9 @@ public:
 	UFUNCTION(BlueprintCallable,Category = "InVideo")
 	void LoadConfig(const FString& ConfigName);
 
+	//已经废弃
 	UFUNCTION(BlueprintCallable,Category = "InVideo")
-	void ContinuePlay(int32 FrameIndex = -1);//已经废弃改为使用如下两个函数
+	void ContinuePlay(int32 FrameIndex = -1);
 
 	UFUNCTION(BlueprintCallable,Category = "InVideo")
 	void PausePlay();
