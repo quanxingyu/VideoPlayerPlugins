@@ -26,7 +26,8 @@ public class InVideo : ModuleRules
       new string[]
       {
         "Core",
-        "Projects"
+        "Projects",
+        "ModelDisplayPlugin"
 				// ... add other public dependencies that you statically link with here ...
 			}
       );

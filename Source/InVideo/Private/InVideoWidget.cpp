@@ -2,6 +2,13 @@
 
 
 #include "InVideoWidget.h"
+#include "MDOverlayWidget.h"
+#include "MDOverlayWidget.h"
+#include "MDItemWidget.h"
+#include "MDModelDisplayActor.h"
+#include "MDModelDisplayConfig.h"
+#include "MDModelDisplayDragger.h"
+#include "MDModelDisplayUtils.h"
 #include "Async/Async.h"
 #include "Rendering/Texture2DResource.h"
 
@@ -104,6 +111,23 @@ void UInVideoWidget::LoadConfig(const FString& ConfigName)
 	UE_LOG(LogTemp, Log, TEXT("Successfully set resolution to %dx%d"), Width, Height);
 }
 
+void UInVideoWidget::BindOnFirstPlayCompleted(FDelegateFirstPlayCompleted Delegate)
+{
+	if (m_VideoPlayPtr.IsValid())
+	{
+		m_VideoPlayPtr->BindFirstPlayCompletedDelegate(Delegate);
+	}
+}
+
+void UInVideoWidget::BindOnVideoFileNotFound(FDelegateVideoFileNotFound Delegate)
+{
+
+	if (m_VideoPlayPtr.IsValid())
+	{
+		m_VideoPlayPtr->BindVideoFileNotFoundDelegate(Delegate);
+	}
+}
+
 void UInVideoWidget::ContinuePlay(int32 FrameIndex)
 {
 	if (m_VideoPlayPtr.IsValid())
@@ -128,24 +152,26 @@ void UInVideoWidget::ResumePlay()
 	}
 }
 
+void UInVideoWidget::LoadVideoURLFromProfile(FString PlayCase)
+{
+	if (m_VideoPlayPtr.IsValid())
+	{
+		m_VideoPlayPtr->LoadVideoURLFromProfile(PlayCase);
+	}
+}
+
 
 
 
 
 void VideoPlay::StartPlay(const FString VideoURL, FDelegatePlayFailed Failed, FDelegateFirstFrame FirstFrame, const bool RealMode, const int Fps, UInVideoWidget* widget)
 {
+	
 	StopPlay();
 	m_widget = widget;
 	m_Stopping = false;
-	m_VideoURL = VideoURL;
-	m_VideoURL = FPaths::ProjectContentDir() + m_VideoURL + TEXT(".mp4");
-	//下面需要进行profile路径的读取
-#if WITH_EDITOR
-	const FString& ProfileDir = FPaths::ProjectDir();
-#else
-	const FString& ProfileDir = FPaths::LaunchDir();
-#endif
-
+	LoadVideoURLFromProfile(VideoURL);
+	UE_LOG(LogTemp, Warning, TEXT("VideoPlay::LoadVideoURLFromProfile - URL Exist!Start to play in %s"),*m_VideoURL);
 	m_RealMode = RealMode;
 	m_Fps = Fps;
 	m_UpdateTime = 1000 / m_Fps;
@@ -155,6 +181,30 @@ void VideoPlay::StartPlay(const FString VideoURL, FDelegatePlayFailed Failed, FD
 	UE_LOG(LogTemp, Log, TEXT("VideoPlay StartPlay Enter"));
 	m_Thread = FRunnableThread::Create(this, TEXT("Video Thread"));
 	UE_LOG(LogTemp, Log, TEXT("VideoPlay StartPlay END"));
+}
+void VideoPlay::BindFirstPlayCompletedDelegate(FDelegateFirstPlayCompleted Delegate)
+{
+	m_FirstPlayCompleted = Delegate;
+}
+void VideoPlay::BindVideoFileNotFoundDelegate(FDelegateVideoFileNotFound Delegate)
+{
+	m_VideoFileNotFound = Delegate;
+}
+void VideoPlay::NotifyFirstPlayCompleted()
+{
+	AsyncTask(ENamedThreads::GameThread, [FirstPlayCompleted = m_FirstPlayCompleted]()
+		{
+			if (FirstPlayCompleted.IsBound())
+				FirstPlayCompleted.Execute();
+		});
+}
+void VideoPlay::NotifyVideoFileNotFound()
+{
+	AsyncTask(ENamedThreads::GameThread, [VideoFileNotFound = m_VideoFileNotFound]()
+		{
+			if (VideoFileNotFound.IsBound())
+				VideoFileNotFound.Execute();
+		});
 }
 void VideoPlay::StopPlay()
 {
@@ -190,6 +240,8 @@ void VideoPlay::StopPlay()
 	m_VideoSize = FVector2D(0, 0);
 	UE_LOG(LogTemp, Log, TEXT("UInVideoWidget StopPlay END"));
 }
+
+
 void VideoPlay::SetPlayRate(float Rate)
 {
 	m_PlayRate = FMath::Max(0.1f, Rate);
@@ -211,6 +263,80 @@ void VideoPlay::SetResolution(const FVector2D& NewResolution)
 		m_bCustomResolution = false;
 	}
 }
+
+void VideoPlay::LoadVideoURLFromProfile(FString PlayCase)
+{
+	if (IsValid(m_widget->OwnerOverlay)&&m_widget->OwnerOverlay->ModelDisplayData.Num()>0)
+	{
+		FString Path = FPaths::Combine(UMDModelDisplayUtils::GetProjectDirectory(), TEXT("Showcase"));
+		FPaths::NormalizeDirectoryName(Path);
+		FString MP4Name = m_widget->OwnerOverlay->ModelDisplayData[m_widget->OwnerOverlay->CurrentModelIndex].MP4Name;
+		FString PreviewMP4Name = m_widget->OwnerOverlay->ModelDisplayData[m_widget->OwnerOverlay->CurrentModelIndex].PreviewMP4;
+		FString IntroMP4 = m_widget->OwnerOverlay->ModelDisplayData[m_widget->OwnerOverlay->CurrentModelIndex].IntroMP4;
+
+		IFileManager& FileManager = IFileManager::Get();
+
+		TArray<FString> AllDirectories;
+		FileManager.FindFilesRecursive(AllDirectories, *Path, TEXT("*"), false, true);
+
+		FString m_MP4URL = FPaths::Combine(AllDirectories[m_widget->OwnerOverlay->CurrentModelIndex], MP4Name);
+		FString m_PreviewMP4URL = FPaths::Combine(AllDirectories[m_widget->OwnerOverlay->CurrentModelIndex], PreviewMP4Name);
+		FString m_IntroMP4URL = FPaths::Combine(AllDirectories[m_widget->OwnerOverlay->CurrentModelIndex], IntroMP4);
+		UE_LOG(LogTemp, Warning, TEXT("VideoPlay::LoadVideoURLFromProfile - Get Data!.MP4URL is %s"),*m_MP4URL);
+		UE_LOG(LogTemp, Warning, TEXT("VideoPlay::LoadVideoURLFromProfile - Get Data!.PreviewMP4Name is %s"), *m_PreviewMP4URL);
+		UE_LOG(LogTemp, Warning, TEXT("VideoPlay::LoadVideoURLFromProfile - Get Data!.IntroMP4 is %s"), *m_IntroMP4URL);
+
+		//if (FPaths::FileExists(m_MP4URL)|| FPaths::FileExists(m_PreviewMP4URL)||FPaths::FileExists(m_IntroMP4URL))
+		//{
+		//	if (PlayCase == "1")m_VideoURL = std::move(m_MP4URL);
+		//	if (PlayCase == "2")m_VideoURL = std::move(m_IntroMP4URL);
+		//	if (PlayCase == "3")m_VideoURL = std::move(m_MP4URL);
+		//	
+		//	UE_LOG(LogTemp, Warning, TEXT("VideoPlay::LoadVideoURLFromProfile - URL Exist!Start to play"));
+		//}
+		//else
+		//{
+		//	UE_LOG(LogTemp, Error, TEXT("VideoPlay::LoadVideoURLFromProfile - ERROR!"));
+
+		//}
+
+		if (PlayCase == TEXT("1"))
+		{
+			if(FPaths::FileExists(m_PreviewMP4URL))m_VideoURL=std::move(m_PreviewMP4URL);
+			else
+			{
+				UE_LOG(LogTemp, Error, TEXT("VideoPlay::LoadVideoURLFromProfile - ERROR!"));
+				NotifyVideoFileNotFound();
+			}
+		}
+		if (PlayCase == TEXT("2"))
+		{
+			if (FPaths::FileExists(m_IntroMP4URL))m_VideoURL = std::move(m_IntroMP4URL);
+			else
+			{
+				UE_LOG(LogTemp, Error, TEXT("VideoPlay::LoadVideoURLFromProfile - ERROR!"));
+				NotifyVideoFileNotFound();
+			}
+		}
+		if (PlayCase == TEXT("3"))
+		{
+			if (FPaths::FileExists(m_MP4URL))m_VideoURL = std::move(m_MP4URL);
+			else
+			{
+				UE_LOG(LogTemp, Error, TEXT("VideoPlay::LoadVideoURLFromProfile - ERROR!"));
+				NotifyVideoFileNotFound();
+			}
+		}
+
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("VideoPlay::LoadVideoURLFromProfile - OwnerOverlay is invalid or m_widget is null."));
+	}
+	return;
+}
+
+
 
 void VideoPlay::ContinuePlay(int32 FrameIndex)
 {
@@ -247,111 +373,229 @@ bool VideoPlay::Init()
 }
 uint32 VideoPlay::Run()
 {
-	UE_LOG(LogTemp, Log, TEXT("VideoPlay open Enter"));
+	UE_LOG(LogTemp, Log, TEXT("VideoPlay 打开视频流 进入"));
 	if (nullptr == m_WrapOpenCv)
 	{
 		m_WrapOpenCv = new WrapOpenCv();
 	}
+
 	if (false == m_WrapOpenCv->m_Stream.open(TCHAR_TO_UTF8(*m_VideoURL)))
 	{
-		UE_LOG(LogTemp, Error, TEXT("VideoPlay open url=%s"), *m_VideoURL);
+		UE_LOG(LogTemp, Error, TEXT("VideoPlay 打开视频失败 url=%s"), *m_VideoURL);
 		NotifyFailed();
 		return -1;
 	}
 
-	// 获取总帧数
 	m_TotalFrames = m_WrapOpenCv->m_Stream.get(cv::CAP_PROP_FRAME_COUNT);
-	UE_LOG(LogTemp, Log, TEXT("VideoPlay open END, Total Frames: %d"), m_TotalFrames);
+	if (m_TotalFrames <= 0) {
+		UE_LOG(LogTemp, Error, TEXT("VideoPlay 获取视频总帧数失败或为0 url=%s"), *m_VideoURL);
+		m_WrapOpenCv->m_Stream.release();
+		delete m_WrapOpenCv;
+		m_WrapOpenCv = nullptr;
+		NotifyFailed();
+		return -1;
+	}
+	UE_LOG(LogTemp, Log, TEXT("VideoPlay 打开视频成功, 总帧数: %d"), m_TotalFrames);
 
-	UE_LOG(LogTemp, Log, TEXT("VideoPlay Run Enter"));
+	// 初始化帧索引
+	m_CurrentFrameIndex = m_bReverse ? (m_TotalFrames - 1) : 0;
+	if (m_TotalFrames > 0) { // 只有在有帧的情况下才设置初始位置
+		m_WrapOpenCv->m_Stream.set(cv::CAP_PROP_POS_FRAMES, m_CurrentFrameIndex);
+	}
+
+	m_LastReadTime = FDateTime::Now(); // 初始化上次读取时间
+
+	UE_LOG(LogTemp, Log, TEXT("VideoPlay Run 运行循环 进入"));
 	while (false == m_Stopping)
 	{
 		if (m_bPaused)
 		{
-			FPlatformProcess::Sleep(0.0001f);
+			FPlatformProcess::Sleep(0.01f);
 			continue;
 		}
 
 		if (false == m_WrapOpenCv->m_Stream.isOpened())
 		{
-			UE_LOG(LogTemp, Error, TEXT("VideoPlay Run isOpened"));
+			UE_LOG(LogTemp, Error, TEXT("VideoPlay Run 循环中发现视频流未打开"));
 			NotifyFailed();
 			return -1;
 		}
 
+		// --- 非实时模式处理 (优化后) ---
 		if (false == m_RealMode)
 		{
+			// 1. 时间控制: 检查是否到达下一帧的显示时间
 			auto DataNow = FDateTime::Now();
-			if ((DataNow - m_LastReadTime).GetTotalMilliseconds() < m_UpdateTime/ m_PlayRate)
-			{
-				FPlatformProcess::Sleep(0.0001);
-				continue;
-			}
-			m_LastReadTime = DataNow;
+			double ElapsedMs = (DataNow - m_LastReadTime).GetTotalMilliseconds();
+			double TargetIntervalMs = m_UpdateTime / m_PlayRate; // m_UpdateTime = 1000 / m_Fps
 
-			// 根据方向更新帧索引
+			if (ElapsedMs < TargetIntervalMs)
+			{
+				// 时间未到，短暂休眠避免忙等
+				// 可以根据剩余时间调整休眠时长，但简单固定值通常足够
+				FPlatformProcess::Sleep(FMath::Max(0.001f, (float)(TargetIntervalMs - ElapsedMs) / 2000.0f)); // 休眠剩余时间的一半，但不小于1ms
+				continue; // 继续检查时间
+			}
+
+			// 时间已到或超过，更新上次读取时间 (即使读取失败也要更新，防止卡死)
+			// 使用实际经过的时间来计算跳过的帧数，更精确地模拟播放速率
+			int32 framesToSkip = FMath::Max(0, FMath::FloorToInt(ElapsedMs / TargetIntervalMs) - 1);
+			m_LastReadTime = DataNow; // 或者 m_LastReadTime += FTimespan::FromMilliseconds(TargetIntervalMs * (framesToSkip + 1)); // 理论上更精确，但可能累积误差
+
+			bool bFrameReadSuccess = false;
+
+			// 2. 反向播放处理 (仍然需要 Seek)
 			if (m_bReverse)
 			{
-				// 使用一致的帧率调整（与正向相同的因子）
-				int32 frameStep = FMath::Max(1, FMath::RoundToInt(2.5 * m_PlayRate));
+				// 反向播放优化空间有限，仍然需要seek
+				// 可以考虑优化 frameStep 计算，例如基于 TargetIntervalMs 和实际 ElapsedMs
+				// 但基本逻辑不变：计算目标帧号 -> seek -> read
+				int32 frameStep = FMath::Max(1, FMath::RoundToInt((ElapsedMs / (1000.0 / m_Fps)) * m_PlayRate)); // 基于实际流逝时间和目标帧率计算步进
 				m_CurrentFrameIndex -= frameStep;
 
-				// 处理反向播放的循环回绕
 				if (m_CurrentFrameIndex < 0)
 				{
-					m_CurrentFrameIndex = m_TotalFrames - 1;
-				}
-			}
-			else
-			{
-				// 使用一致的基于整数的帧步进
-				int32 frameStep = FMath::Max(1, FMath::RoundToInt(2 * m_PlayRate));
-				m_CurrentFrameIndex += frameStep;
-
-				// 处理正向播放的循环回绕
-				if (m_CurrentFrameIndex >= m_TotalFrames)
-				{
-					m_CurrentFrameIndex = 0;
-				}
-			}
-
-			// 始终设置帧位置以确保一致性
-			m_WrapOpenCv->m_Stream.set(cv::CAP_PROP_POS_FRAMES, m_CurrentFrameIndex);
-
-			if (true == m_WrapOpenCv->m_Stream.read(m_WrapOpenCv->m_Frame))
-			{
-				NotifyFirstFrame();
-				UpdateTexture();
-			}
-			else
-			{
-				// 读取失败时重试
-				if (m_bReverse)
-				{
-					m_CurrentFrameIndex = m_TotalFrames - 1;
+					UE_LOG(LogTemp, Verbose, TEXT("非实时模式: 索引回绕 (反向): Index %d < 0. 重置为最后一帧 %d."), m_CurrentFrameIndex, m_TotalFrames - 1);
+					m_CurrentFrameIndex = m_TotalFrames - 1; // 回绕到最后一帧
+					// 反向播放完成一轮 (从头到尾)
+					if (!m_bFirstPlayCompleted) // 只有首次反向播完触发
+					{
+						// 注意：反向播放的“完成”概念可能需要重新定义，这里暂时不触发
+						// m_bFirstPlayCompleted = true;
+						// NotifyFirstPlayCompleted();
+					}
+					// Seek 到循环点
+					m_WrapOpenCv->m_Stream.set(cv::CAP_PROP_POS_FRAMES, m_CurrentFrameIndex);
 				}
 				else
 				{
-					m_CurrentFrameIndex = 0;
+					// 正常反向 Seek
+					m_WrapOpenCv->m_Stream.set(cv::CAP_PROP_POS_FRAMES, m_CurrentFrameIndex);
 				}
-				m_WrapOpenCv->m_Stream.set(cv::CAP_PROP_POS_FRAMES, m_CurrentFrameIndex);
-				continue;
+
+				// 尝试读取
+				if (m_WrapOpenCv->m_Stream.read(m_WrapOpenCv->m_Frame))
+				{
+					bFrameReadSuccess = true;
+					// 读取成功后，可以获取实际读取到的帧号，更新 m_CurrentFrameIndex 以提高准确性
+					// m_CurrentFrameIndex = m_WrapOpenCv->m_Stream.get(cv::CAP_PROP_POS_FRAMES) - 1; // get返回的是下一帧的索引
+				}
 			}
-		}
+			// 3. 正向播放处理 (优化核心：顺序读取)
+			else // m_bReverse == false
+			{
+				// 跳过因时间流逝需要跳过的帧 (模拟快进)
+				for (int32 i = 0; i < framesToSkip; ++i)
+				{
+					if (!m_WrapOpenCv->m_Stream.grab()) // grab() 比 read() 更快，因为它只抓取帧数据不解码
+					{
+						// 如果抓取失败，可能到了视频末尾
+						break;
+					}
+					m_CurrentFrameIndex++; // 也要更新索引计数
+				}
+
+				// 读取当前目标帧
+				if (m_WrapOpenCv->m_Stream.read(m_WrapOpenCv->m_Frame))
+				{
+					bFrameReadSuccess = true;
+					m_CurrentFrameIndex++; // 更新索引到下一帧的位置
+				}
+
+				// 检查是否到达末尾 (读取失败或索引超限)
+				if (!bFrameReadSuccess || m_CurrentFrameIndex >= m_TotalFrames)
+				{
+					UE_LOG(LogTemp, Verbose, TEXT("非实时模式: 到达视频末尾 (读取 %s, Index %d >= %d)."),
+						bFrameReadSuccess ? TEXT("成功") : TEXT("失败"), m_CurrentFrameIndex, m_TotalFrames);
+
+					// --- 首次播放完成检测 ---
+					if (!m_bFirstPlayCompleted)
+					{
+						m_bFirstPlayCompleted = true;
+						NotifyFirstPlayCompleted();
+						UE_LOG(LogTemp, Log, TEXT("NotifyFirstPlayCompleted (非实时模式正向播放完成)"));
+					}
+					// --- 首次完成检测结束 ---
+
+					// 重置到开头实现循环播放
+					m_CurrentFrameIndex = 0;
+					m_WrapOpenCv->m_Stream.set(cv::CAP_PROP_POS_FRAMES, m_CurrentFrameIndex);
+					UE_LOG(LogTemp, Verbose, TEXT("非实时模式: 重置索引为 0 以进行循环播放."));
+
+					// 尝试读取第一帧，否则画面会停留在最后一帧直到下一个时间间隔
+					if (m_WrapOpenCv->m_Stream.read(m_WrapOpenCv->m_Frame))
+					{
+						bFrameReadSuccess = true;
+						m_CurrentFrameIndex++; // 更新索引
+					}
+					else
+					{
+						// 如果连第一帧都读不了，可能视频有问题
+						UE_LOG(LogTemp, Error, TEXT("非实时模式: 循环后读取第一帧失败!"));
+						// 这里可以选择停止或继续尝试
+					}
+				}
+			} // 结束正向播放处理
+
+			// 4. 更新纹理 (如果读取成功)
+			if (bFrameReadSuccess)
+			{
+				NotifyFirstFrame(); // 通知首帧（如果尚未通知）
+				UpdateTexture();    // 更新纹理
+			}
+			else
+			{
+				// 读取失败（非循环点），可以记录日志或进行其他错误处理
+				UE_LOG(LogTemp, Warning, TEXT("非实时模式: 在帧 %d 处读取失败 (非循环点)."), m_CurrentFrameIndex);
+				// 可以考虑重试或停止
+			}
+
+		} // 结束 if (false == m_RealMode)
+		// --- 实时模式处理 (保持不变) ---
 		else
 		{
-			// 实时模式的处理
 			FPlatformProcess::Sleep(m_SleepSecond / m_PlayRate);
 
 			if (true == m_WrapOpenCv->m_Stream.read(m_WrapOpenCv->m_Frame))
 			{
 				NotifyFirstFrame();
 				UpdateTexture();
+				// 实时模式下也应该更新帧索引，虽然不直接用它来seek
+				m_CurrentFrameIndex = m_WrapOpenCv->m_Stream.get(cv::CAP_PROP_POS_FRAMES);
 			}
-		}
-	}
+			else
+			{
+				// 实时模式读取失败，处理循环和完成通知
+				if (!m_bReverse) // 正向播放结束
+				{
+					if (!m_bFirstPlayCompleted)
+					{
+						m_bFirstPlayCompleted = true;
+						NotifyFirstPlayCompleted();
+						UE_LOG(LogTemp, Log, TEXT("NotifyFirstPlayCompleted (实时模式读取失败/结束)"));
+					}
+					// 实时模式循环
+					m_CurrentFrameIndex = 0;
+					m_WrapOpenCv->m_Stream.set(cv::CAP_PROP_POS_FRAMES, m_CurrentFrameIndex);
+				}
+				else // 反向播放结束 (假设实时反向可行且会失败在开头)
+				{
+					// 处理反向循环和通知（如果需要）
+					m_CurrentFrameIndex = m_TotalFrames - 1;
+					m_WrapOpenCv->m_Stream.set(cv::CAP_PROP_POS_FRAMES, m_CurrentFrameIndex);
+				}
+			}
+		} // 结束 else (实时模式)
+	} // 结束 while (false == m_Stopping)
 
-	UE_LOG(LogTemp, Log, TEXT("VideoPlay Run END"));
+	UE_LOG(LogTemp, Log, TEXT("VideoPlay Run 运行循环 结束"));
+	// 清理资源 (确保在循环外执行)
+	if (m_WrapOpenCv && m_WrapOpenCv->m_Stream.isOpened()) {
+		m_WrapOpenCv->m_Stream.release();
+	}
+	// delete m_WrapOpenCv; // 不在这里delete，StopPlay会处理
+	// m_WrapOpenCv = nullptr;
+
 	return 0;
 }
 void VideoPlay::Exit()
@@ -383,27 +627,31 @@ void VideoPlay::NotifyFirstFrame()
 				FirstFrame.Execute();
 		});
 }
+
 void VideoPlay::UpdateTexture()
 {
-	// 1. 得到最终用于渲染的 Mat —— resizedFrame
+	// 1. 使用双缓冲避免每帧分配内存
+	static TArray<uint8> PixelBuffer1, PixelBuffer2;
+	static TArray<uint8>* CurrentBuffer = &PixelBuffer1;
+	static TArray<uint8>* NextBuffer = &PixelBuffer2;
+
+	// 2. 得到最终用于渲染的 Mat —— resizedFrame
 	cv::Mat resizedFrame;
 	if (m_bCustomResolution)
 	{
-		// 如果需要自定义分辨率，就对原始帧做resize
 		cv::resize(m_WrapOpenCv->m_Frame, resizedFrame,
 			cv::Size(m_TargetResolution.X, m_TargetResolution.Y));
 	}
 	else
 	{
-		// 如果不需要自定义分辨率，就直接使用原始帧
 		resizedFrame = m_WrapOpenCv->m_Frame;
 	}
 
-	// 2. 用 resizedFrame 的实际大小后续全部使用
+	// 3. 用 resizedFrame 的实际大小后续全部使用
 	const int32 NewWidth = resizedFrame.cols;
 	const int32 NewHeight = resizedFrame.rows;
 
-	// 3. 判断是否需要重建纹理资源
+	// 4. 判断是否需要重建纹理资源
 	if (VideoTexture == nullptr
 		|| m_VideoSize.X != NewWidth
 		|| m_VideoSize.Y != NewHeight)
@@ -415,14 +663,15 @@ void VideoPlay::UpdateTexture()
 		FEvent* SyncEvent = FGenericPlatformProcess::GetSynchEventFromPool(false);
 		AsyncTask(ENamedThreads::GameThread, [this, SyncEvent]()
 			{
-				// 创建Transient纹理
 				VideoTexture = UTexture2D::CreateTransient(m_VideoSize.X, m_VideoSize.Y);
 				if (VideoTexture)
 				{
+					VideoTexture->Filter = TF_Bilinear;
+					VideoTexture->SRGB = true;
+					VideoTexture->CompressionSettings = TC_Default;
 					VideoTexture->UpdateResource();
 					VideoTexture->AddToRoot();  // 防止被GC
 				}
-				// 记录资源指针
 				m_Texture2DResource = (FTexture2DResource*)VideoTexture->GetResource();
 				SyncEvent->Trigger();
 			});
@@ -440,8 +689,10 @@ void VideoPlay::UpdateTexture()
 			NewWidth, NewHeight
 		);
 
-		// 分配 Data 数组
-		Data.Init(FColor(0, 0, 0, 255), NewWidth * NewHeight);
+		// 预分配一次，避免频繁分配
+		if (m_PixelDataBuffer.Num() < NewWidth * NewHeight * 4) {
+			m_PixelDataBuffer.SetNumUninitialized(NewWidth * NewHeight * 4);
+		}
 	}
 
 	// 如果依然没有 Texture，说明可能初始化失败，直接返回
@@ -449,34 +700,28 @@ void VideoPlay::UpdateTexture()
 	{
 		return;
 	}
+
+	// 5. 填充像素数据 (BGR => RGBA)
+	FColor* PixelData = reinterpret_cast<FColor*>(m_PixelDataBuffer.GetData());
+
+	// 使用并行处理加速像素转换
 	ParallelFor(NewHeight, [&](int32 y) {
 		for (int x = 0; x < NewWidth; x++)
 		{
 			int32 i = x + y * NewWidth;
-			Data[i].B = resizedFrame.data[i * 3 + 0];
-			Data[i].G = resizedFrame.data[i * 3 + 1];
-			Data[i].R = resizedFrame.data[i * 3 + 2];
-			Data[i].A = 255;
+			int32 srcIdx = i * 3;
+			PixelData[i].B = resizedFrame.data[srcIdx];
+			PixelData[i].G = resizedFrame.data[srcIdx + 1];
+			PixelData[i].R = resizedFrame.data[srcIdx + 2];
+			PixelData[i].A = 255;
 		}
 		});
-	// 4. 填充像素数据 (BGR => FColor)
-	//for (int y = 0; y < NewHeight; y++)
-	//{
-	//	for (int x = 0; x < NewWidth; x++)
-	//	{
-	//		int32 i = x + y * NewWidth;
-	//		Data[i].B = resizedFrame.data[i * 3 + 0];
-	//		Data[i].G = resizedFrame.data[i * 3 + 1];
-	//		Data[i].R = resizedFrame.data[i * 3 + 2];
-	//		// Data[i].A = 255;  // 如果需要手动设置透明度
-	//	}
-	//}
 
-	// 5. 更新纹理区域
+	// 6. 更新纹理区域
 	UpdateTextureRegions(VideoTexture, 0, 1, m_VideoUpdateTextureRegion,
-		(uint32)(4 * NewWidth), (uint32)4, (uint8*)Data.GetData(), false);
+		(uint32)(4 * NewWidth), (uint32)4, (uint8*)PixelData, false);
 
-	// 6. 在Game Thread中设置 UImage 的 Brush
+	// 7. 在Game Thread中设置 UImage 的 Brush
 	AsyncTask(ENamedThreads::GameThread, [vt = VideoTexture, widget = m_widget]()
 		{
 			if (!widget.IsValid() || !vt->IsValidLowLevel() || !widget->ImageVideo)

@@ -23,5 +23,11 @@
 				"Win64"
 			]
 		}
+	],
+	"Plugins": [
+		{
+			"Name": "ModelDisplayPlugin",
+			"Enabled": true
+		}
 	]
 }
